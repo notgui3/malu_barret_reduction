@@ -627,7 +627,7 @@ void LN_to_BN(LN *ln, BIGNUM **bn) {
 int barret_vs_standard(int iters, uint64_t x_bit_size, uint64_t m_bit_size, bool seeded, int seed){
 
     printf("Barrett vs Standard Division Benchmark\n\n");
-    printf("X value bits: %i, M value bits: %i\n\n", iters, x_bit_size, m_bit_size);
+    printf("X value bits: %i, M value bits: %i\n\n", x_bit_size, m_bit_size);
 
     if(seeded){
         srand(seed);
@@ -690,6 +690,7 @@ int barret_vs_standard(int iters, uint64_t x_bit_size, uint64_t m_bit_size, bool
     double barrett_time = (double)(bar_end - bar_start) / CLOCKS_PER_SEC;
     printf("    Barrett Loop Time (Total):    %f seconds\n", barrett_time);
 
+
     // VERIFICATION
     printf("\n--- Comparison ---\n");
     printf("Standard Total Time: %f seconds\n", stand_time);
@@ -709,6 +710,16 @@ int barret_vs_standard(int iters, uint64_t x_bit_size, uint64_t m_bit_size, bool
         printf("Standard result bits: %llu\n", LN_bit_length(&div_remainder));
         printf("Barrett result bits:  %llu\n", LN_bit_length(&barrett_res));
     }
+
+    FILE *fptr;
+    fptr = fopen("stats/speedup_1355u.txt", "a");
+    if (fptr == NULL) {
+        printf("Error opening the file!\n");
+        return 1; 
+    }
+    // Write number of iterations, and speedup
+    fprintf(fptr, "%i, %f\n", iters, stand_time/barrett_time);
+    fclose(fptr);
 
     // Cleanup Memory
     free_LN(&M);
@@ -832,15 +843,21 @@ int main(void) {
     
     printf("BARRET VS STANDARD COMPARISON\n");
     printf("----------------------------\n");
+    int iters[1] = { 10000};
     // Iterations, X bit size, M bit size, Seeded?, Seed
-    barret_vs_standard(10000, 4096, 2048, 1, 100);
+    for(size_t t = 0; t < sizeof(iters); t++){
+        for(int i = 0; i < 200; i++){
+            barret_vs_standard(iters[t], 4096, 2048, 1, 100);
+        }
+    }
+        
 
     printf("\n\n\n\n\n\n");
 
     printf("RSA OPENSSL COMPARISON\n");
     printf("----------------------------\n");
     // Iterations, Seeded?, Seed
-    rsa_check(10000, 1, 1020);
+    rsa_check(1000, 1, 1020);
     return 0;
 }
 
