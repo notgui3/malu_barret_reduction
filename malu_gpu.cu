@@ -730,5 +730,73 @@ int main(void) {
     printf("GPU Processing Time: %f seconds\n", gpu_time);
 
 
+    // OPENSSL bignum test copied from cpu code
+    printf("\nRunning OpenSSL RSA Encryption %d times sequentially on CPU for Validation...\n", iters);
     
+    BIGNUM *bn_N = NULL, *bn_m = NULL, *bn_e = NULL, *bn_ciphertext = BN_new();
+    BN_CTX *bn_ctx = BN_CTX_new();
+
+    // Turn LN values to BIGNUMs
+    LN_to_BN(&N, &bn_N);
+    LN_to_BN(&e, &bn_e);
+
+    clock_t start_ssl = clock();
+    // Run validation loop to capture verification profile times
+    for (int i = 0; i < iters; i++) {
+        if (bn_m) BN_free(bn_m);
+        LN_to_BN(&h_messages[i], &bn_m);
+        BN_mod_exp(bn_ciphertext, bn_m, bn_e, bn_N, bn_ctx);
+    }
+    clock_t end_ssl = clock();
+    double ssl_time = (double)(end_ssl - start_ssl) / CLOCKS_PER_SEC;
+    printf("    OpenSSL Time:   %f seconds\n", ssl_time);
+
+
+    // PERFORMANCE METRICS RUN ANALYSIS
+    printf("\n--- Performance---\n");
+    printf("GPU Barrett: %f seconds\n", gpu_time);
+    printf("OpenSSL (CPU only): %f seconds\n", ssl_time);
+    
+    if (gpu_time > 0) {
+        printf("GPU parallel layout is %.2fx faster than serial OpenSSL execution\n", ssl_time / gpu_time);
+    }
+
+
+    printf("\n--- Correctness Check ---\n");
+    // Sends data back from GPU -> CPU
+    cudaMemcpy(h_ciphertexts, device_ciphertexts, iters * sizeof(LN), cudaMemcpyDeviceToHost);
+
+    // Convert our LN result to a BIGNUM and compare it to OpenSSL's result
+    BIGNUM *bn_ln_result = NULL;
+    LN_to_BN(&h_ciphertexts[0], &bn_ln_result);
+
+    if (bn_m) {
+        BN_free(bn_m);
+    }
+    LN_to_BN(&h_messages[0], &bn_m);
+    BN_mod_exp(bn_ciphertext, bn_m, bn_e, bn_N, bn_ctx);
+
+    if (BN_cmp(bn_ciphertext, bn_ln_result) == 0) {
+        printf("SUCCESS! GPU implementation matches OpenSSL results.\n\n");
+    } else {
+        printf("FAILED! Mismatch discovered .\n\n");
+    }
+
+    // Cleanup mems
+    cudaFree(device_messages); 
+    cudaFree(device_exponents); 
+    cudaFree(device_ciphertexts); 
+    cudaFree(device_ctx);
+    free(h_messages); 
+    free(h_exponents); 
+    free(h_ciphertexts); 
+    free(h_ctx);
+    BN_free(bn_N); 
+    BN_free(bn_m); 
+    BN_free(bn_e); 
+    BN_free(bn_ciphertext); 
+    BN_free(bn_ln_result);
+    BN_CTX_free(bn_ctx);
+
+    return 0;
 }
