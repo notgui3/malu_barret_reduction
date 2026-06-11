@@ -520,11 +520,461 @@ __global__ void batch_rsa_kernel(LN *messages, LN *exponents, LN_BarrettSet *ctx
     out_container.size = 1;
     for(int i=0; i<8192; i++) out_container.nums[i] = 0;
 
-    // Threads compute independent modular exponents concurrently 
+    // Threads does independent messages concurrently 
     LN_mod_exp(&messages[tid], &exponents[tid], &ctx[tid], &out_container);
 
-    // Save final value back to global memory space
     ciphertexts[tid] = out_container;
+}
+
+// Standard Division (Shift_Subtract)
+int LN_div_mod(const LN *numer, const LN *denom, LN *quotient, LN *remainder) {
+    // Div by zero case
+    if(denom->size == 1 && denom->nums[0] == 0) {
+        return 0; 
+    }
+    
+
+    // Initialize quotient and remainder to 0
+    quotient->size = numer->size;
+    quotient->nums = (uint64_t *)calloc(quotient->size, sizeof(uint64_t));
+    
+    remainder->size = 1;
+    remainder->nums = (uint64_t *)calloc(1, sizeof(uint64_t));
+
+    if(!quotient->nums || !remainder->nums){
+        return 0;
+    }
+
+    uint64_t total_bits = LN_bit_length(numer);
+
+    // Process from MSB down to LSB
+    for (int64_t i = total_bits - 1; i >= 0; i--) {
+        // remainder = remainder << 1
+        LN temp_rem;
+        LN_L_shift(remainder, 1, &temp_rem);
+        free_LN(remainder);
+        *remainder = temp_rem;
+
+        // remainder[0] = numer[i]
+        remainder->nums[0] |= LN_get_bit(numer, i);
+
+        // if remainder >= denom
+        if(LN_cmp(remainder, denom) >= 0) {
+            // remainder = remainder - denom
+            LN new_rem;
+            LN_sub(remainder, denom, &new_rem);
+            free_LN(remainder);
+            *remainder = new_rem;
+            
+            // quotient[i] = 1
+            LN_set_bit(quotient, i);
+        }
+    }
+
+    // Normalize quotient
+    while(quotient->size > 1 && quotient->nums[quotient->size - 1] == 0){
+        quotient->size--;
+    } 
+    
+    return 1;
+}
+
+
+typedef struct {
+    LN M;       // The modulus
+    LN mu;      // The precomputed inverse: floor(2^(2k) / M)
+    uint64_t k; // Bit length of M
+} LN_BarrettSet;
+
+// Barrett Reduction Mod, out = X mod M
+int LN_barrett_redu(LN *X, const LN_BarrettSet *ctx, LN *out) {
+    if(!X || !ctx || !out){
+        return 0;
+    }
+
+    LN q1 = {0}, q2 = {0}, q3 = {0};
+    LN q3_M = {0}, R = {0};
+
+    // q1 = X >> (k - 1)
+    if(ctx->k > 1) {
+        LN_R_shift(X, ctx->k - 1, &q1);
+    } else {
+        q1.size = X->size;
+        q1.nums = (uint64_t*)calloc(q1.size, sizeof(uint64_t));
+        memcpy(q1.nums, X->nums, q1.size * sizeof(uint64_t));
+    }
+
+    // q2 = q1 * mu
+    LN_LN_mult(&q1, (LN*)&(ctx->mu), &q2);
+
+    // q3 = q2 >> (k + 1)
+    LN_R_shift(&q2, ctx->k + 1, &q3);
+
+    // q3_M = q3 * M
+    LN_LN_mult(&q3, (LN*)&(ctx->M), &q3_M);
+
+    // R = X - q3_M
+    if(LN_cmp(X, &q3_M) >= 0) {
+        LN_sub(X, &q3_M, &R);
+    } else {
+        // Estimation Overshooting Fallback
+        R.size = X->size;
+        R.nums = (uint64_t*)calloc(R.size, sizeof(uint64_t));
+        memcpy(R.nums, X->nums, R.size * sizeof(uint64_t));
+    }
+
+    // Corrections: while R >= M, R = R - M
+    while(LN_cmp(&R, &(ctx->M)) >= 0) {
+        LN temp_R;
+        LN_sub(&R, &(ctx->M), &temp_R);
+        free_LN(&R);
+        R = temp_R;
+    }
+
+    // Transfer memory and values to output
+    out->size = R.size;
+    out->nums = R.nums;
+
+    // Freeing Temp Vars
+    free_LN(&q1);
+    free_LN(&q2);
+    free_LN(&q3);
+    free_LN(&q3_M);
+
+    return 1;
+}
+
+// Mod Expoenetation, Square Multiply, out = (base ^ exp) mod M
+int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
+
+    if(!base || !exp || !ctx || !out){
+        return 0;
+    }
+
+    // Set base result to 1
+    LN result = {0};
+    result.size = 1;
+    result.nums = (uint64_t*)calloc(1, sizeof(uint64_t));
+    result.nums[0] = 1;
+
+    // base_temp = base mod M
+    LN base_temp = {0};
+    LN_barrett_redu(base, ctx, &base_temp); 
+
+    uint64_t total_bits = LN_bit_length(exp);
+
+    // Process from LSB to MSB
+    for (uint64_t i = 0; i < total_bits; i++) {
+        // If current bit is 1, result = (result * base_temp) % M
+        if(LN_get_bit(exp, i) == 1) {
+            LN mult_res = {0};
+            LN_LN_mult(&result, &base_temp, &mult_res);
+            free_LN(&result);
+            LN_barrett_redu(&mult_res, ctx, &result);
+            free_LN(&mult_res);
+        }
+        
+        // base_temp = (base_temp * base_temp) % M
+        LN sqr_res = {0};
+        LN_LN_mult(&base_temp, &base_temp, &sqr_res);
+        free_LN(&base_temp);
+        LN_barrett_redu(&sqr_res, ctx, &base_temp);
+        free_LN(&sqr_res);
+    }
+
+    free_LN(&base_temp);
+    
+    // Transfer memory ownership to output
+    out->size = result.size;
+    out->nums = result.nums;
+    return 1;
+}
+
+
+
+// Random 64 bit Num
+uint64_t rand_64() {
+    uint64_t r = 0;
+    for (int i = 0; i < 4; i++) {
+        r = (r << 16) | (rand() & 0xFFFF);
+    }
+    return r;
+}
+
+// Generate random N bit Large num
+void LN_rand_num(LN *num, uint64_t bits) {
+
+    uint64_t limbs = (bits + 63) / 64;
+    num->size = limbs;
+    num->nums = (uint64_t *)calloc(limbs, sizeof(uint64_t));
+    
+    for (uint64_t i = 0; i < limbs; i++) {
+        num->nums[i] = rand_64();
+    }
+    
+    // Mask the most significant limb
+    uint64_t extra_bits = bits % 64;
+    if(extra_bits > 0) {
+        uint64_t mask = (1ULL << extra_bits) - 1;
+        num->nums[limbs - 1] &= mask;
+    }
+    // Ensure the highest bit is 1
+    num->nums[limbs - 1] |= (1ULL << ((extra_bits == 0 ? 64 : extra_bits) - 1));
+}
+
+// Barret Setup, mu = floor(2^(2k) / M)
+int LN_setup_barrett(const LN *M, LN_BarrettSet *ctx) {
+
+    ctx->k = LN_bit_length(M);
+    
+    // Copy M into setup context
+    ctx->M.size = M->size;
+    ctx->M.nums = (uint64_t *)calloc(M->size, sizeof(uint64_t));
+    memcpy(ctx->M.nums, M->nums, M->size * sizeof(uint64_t));
+
+    // Compute 2^(2k)
+    LN b_2k = {0};
+    uint64_t target_bit = 2 * ctx->k;
+    b_2k.size = (target_bit / 64) + 1;
+    b_2k.nums = (uint64_t *)calloc(b_2k.size, sizeof(uint64_t));
+    b_2k.nums[target_bit / 64] |= (1ULL << (target_bit % 64));
+
+    // Calculate mu = 2^(2k) / M
+    LN discard_rem = {0};
+    LN_div_mod(&b_2k, &(ctx->M), &(ctx->mu), &discard_rem);
+
+    free_LN(&b_2k);
+    free_LN(&discard_rem);
+    return 1;
+
+}
+
+
+void free_barrett_ctx(LN_BarrettSet *ctx) {
+    free_LN(&(ctx->M));
+    free_LN(&(ctx->mu));
+}
+
+// Convert LN to OpenSSL BIGNUM
+void LN_to_BN(LN *ln, BIGNUM **bn) {
+    uint64_t bytes = ln->size * 8;
+    unsigned char *buf = (unsigned char *)malloc(bytes);
+    
+    // Convert to Big-Endian byte array for OpenSSL consumption
+    for (uint64_t i = 0; i < ln->size; i++) {
+        uint64_t limb = ln->nums[i];
+        for (int j = 0; j < 8; j++) {
+            buf[bytes - 1 - (i * 8 + j)] = (limb >> (j * 8)) & 0xFF;
+        }
+    }
+    
+    *bn = BN_bin2bn(buf, bytes, NULL);
+    free(buf);
+}
+
+
+int barret_vs_standard(int iters, uint64_t x_bit_size, uint64_t m_bit_size, bool seeded, int seed){
+
+    printf("Barrett vs Standard Division Benchmark\n\n");
+    printf("X value bits: %i, M value bits: %i\n\n", iters, x_bit_size, m_bit_size);
+
+    if(seeded){
+        srand(seed);
+        printf("Running %i times with Seed %i\n\n", iters, seed);
+    }
+    else{
+        srand(time(NULL));
+        printf("Running %i times with Random Seed\n\n", iters);
+    }
+    
+
+
+    LN M = {0};
+    LN X = {0};
+    LN barrett_res = {0};
+    LN div_quotient = {0};
+    LN div_remainder = {0};
+    LN_BarrettSet ctx = {0};
+
+
+    printf("Generating Random Value X and Modulus M\n");
+    LN_rand_num(&X, x_bit_size);
+    LN_rand_num(&M, m_bit_size);
+
+    // STANDARD SHIFT SUBTRACT DIVISION
+    printf("\nRunning Standard Division %d times\n", iters);
+    clock_t stand_start = clock();
+    
+    for (int i = 0; i < iters; i++) {
+        // Free previous iters' memory
+        free_LN(&div_quotient);
+        free_LN(&div_remainder);
+        
+        LN_div_mod(&X, &M, &div_quotient, &div_remainder);
+    }
+    
+    clock_t stand_end = clock();
+    double stand_time = (double)(stand_end - stand_start) / CLOCKS_PER_SEC;
+    printf("    Standard Div Time (Total): %f seconds\n", stand_time);
+
+    // BARRETT REDUCTION
+    printf("\nRunning Barrett Reduction...\n");
+    
+    // Time the setup (done ONCE)
+    clock_t setup_start = clock();
+    LN_setup_barrett(&M, &ctx);
+    clock_t setup_end = clock();
+    double setup_time = (double)(setup_end - setup_start) / CLOCKS_PER_SEC;
+    printf("    Barrett Precompute (mu) Time: %f seconds\n", setup_time);
+
+    // Time the reduction iters
+    clock_t bar_start = clock();
+    
+    for (int i = 0; i < iters; i++) {
+        free_LN(&barrett_res);
+        LN_barrett_redu(&X, &ctx, &barrett_res);
+    }
+    
+    clock_t bar_end = clock();
+    double barrett_time = (double)(bar_end - bar_start) / CLOCKS_PER_SEC;
+    printf("    Barrett Loop Time (Total):    %f seconds\n", barrett_time);
+
+    // VERIFICATION
+    printf("\n--- Comparison ---\n");
+    printf("Standard Total Time: %f seconds\n", stand_time);
+    printf("Barrett Total Time:  %f seconds (Setup %fs + Loop %fs)\n", 
+           setup_time + barrett_time, setup_time, barrett_time);
+           
+    if(barrett_time > 0) {
+        printf("\n-> Loop Speedup: Barrett is %.2fx faster than Standard Division per reduction.\n", 
+               stand_time / barrett_time);
+    }
+
+    printf("\n--- Correctness ---\n");
+    if(LN_cmp(&div_remainder, &barrett_res) == 0) {
+        printf("SUCCESS (Barrett = Standard Modulo)\n");
+    } else {
+        printf("FAILED\n");
+        printf("Standard result bits: %llu\n", LN_bit_length(&div_remainder));
+        printf("Barrett result bits:  %llu\n", LN_bit_length(&barrett_res));
+    }
+
+    // Cleanup Memory
+    free_LN(&M);
+    free_LN(&X);
+    free_LN(&barrett_res);
+    free_LN(&div_quotient);
+    free_LN(&div_remainder);
+    free_barrett_ctx(&ctx);
+}
+
+
+int rsa_check(int iters, bool seeded, int seed) {
+
+    printf("LN vs OpenSSL RSA Verification\n\n");
+    if(seeded){
+        srand(seed);
+        printf("Running %i times with Seed %i\n\n", iters, seed);
+    }
+    else{
+        srand(time(NULL));
+        printf("Running %i times with Random Seed\n\n", iters);
+    }
+
+
+    LN N = {0}; // RSA Key Modulus
+    LN m = {0}; // Message
+    LN e = {0}; // Public Exponent
+    LN ln_ciphertext = {0};
+    LN_BarrettSet ctx = {0};
+
+    // 1. Setup simulated RSA parameters
+    printf("Generating Random RSA Parameters\n");
+    LN_rand_num(&N, 2048); 
+    LN_rand_num(&m, 2048);
+    
+    // Standard RSA public exponent 65537, 0x10001
+    e.size = 1;
+    e.nums = (uint64_t*)calloc(1, sizeof(uint64_t));
+    e.nums[0] = 65537;
+
+    // Precompute Barrett Context for N
+    printf("Precomputing Barrett Context for Modulus N\n");
+    clock_t setup_start = clock();
+    LN_setup_barrett(&N, &ctx);
+    clock_t setup_end = clock();
+    printf("    Setup Time: %f seconds\n", (double)(setup_end - setup_start) / CLOCKS_PER_SEC);
+
+    // LN TEST
+    printf("\nRunning LN RSA Encryption %d times\n", iters);
+    clock_t start_ln = clock();
+    
+    for (int i = 0; i < iters; i++) {
+        free_LN(&ln_ciphertext);
+        LN_mod_exp(&m, &e, &ctx, &ln_ciphertext);
+    }
+    
+    clock_t end_ln = clock();
+    double ln_time = (double)(end_ln - start_ln) / CLOCKS_PER_SEC;
+    printf("    LN Time: %f seconds\n", ln_time);
+
+
+    // OPENSSL BIGNUM TEST
+    printf("\nRunning OpenSSL RSA Encryption %d times...\n", iters);
+    
+    BIGNUM *bn_N = NULL, *bn_m = NULL, *bn_e = NULL, *bn_ciphertext = BN_new();
+    BN_CTX *bn_ctx = BN_CTX_new();
+
+    // Turn LN values to BIGNUMs
+    LN_to_BN(&N, &bn_N);
+    LN_to_BN(&m, &bn_m);
+    LN_to_BN(&e, &bn_e);
+
+    clock_t start_ssl = clock();
+    
+    for (int i = 0; i < iters; i++) {
+        BN_mod_exp(bn_ciphertext, bn_m, bn_e, bn_N, bn_ctx);
+    }
+    
+    clock_t end_ssl = clock();
+    double ssl_time = (double)(end_ssl - start_ssl) / CLOCKS_PER_SEC;
+    printf("    OpenSSL Time:   %f seconds\n", ssl_time);
+
+
+    // VERIFICATION
+    printf("\n--- Performance ---\n");
+    printf("LN (Barrett): %f seconds\n", ln_time);
+    printf("OpenSSL: %f seconds\n", ssl_time);
+    
+    if(ssl_time > 0) {
+        printf("OpenSSL is %.2fx faster than LN RSA.\n", ln_time / ssl_time);
+    }
+
+    printf("\n--- Correctness Check ---\n");
+    // Convert our LN result to a BIGNUM and compare it to OpenSSL's result
+    BIGNUM *bn_ln_result = NULL;
+    LN_to_BN(&ln_ciphertext, &bn_ln_result);
+
+    if(BN_cmp(bn_ciphertext, bn_ln_result) == 0) {
+        printf("SUCCESS, LN RSA matches OpenSSL\n");
+    } else {
+        printf("FAILED\n");
+    }
+
+    // Cleanup mems
+    free_LN(&N);
+    free_LN(&m);
+    free_LN(&e);
+    free_LN(&ln_ciphertext);
+    free_barrett_ctx(&ctx);
+    BN_free(bn_N);
+    BN_free(bn_m);
+    BN_free(bn_e);
+    BN_free(bn_ciphertext);
+    BN_free(bn_ln_result);
+    BN_CTX_free(bn_ctx);
+
+    return 0;
 }
 
 
