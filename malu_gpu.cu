@@ -521,18 +521,17 @@ __global__ void batch_rsa_kernel(LN *messages, LN *exponents, LN_BarrettSet *ctx
     for(int i=0; i<8192; i++) out_container.nums[i] = 0;
 
     // Threads does independent messages concurrently 
-    LN_mod_exp(&messages[tid], &exponents[tid], &ctx[tid], &out_container);
+    LN_mod_exp(&messages[i], &exponents[i], &ctx[i], &out_container);
 
-    ciphertexts[tid] = out_container;
+    ciphertexts[i] = out_container;
 }
 
 // Standard Division (Shift_Subtract)
-int LN_div_mod(const LN *numer, const LN *denom, LN *quotient, LN *remainder) {
+int CPU_LN_div_mod(const LN *numer, const LN *denom, LN *quotient, LN *remainder) {
     // Div by zero case
     if(denom->size == 1 && denom->nums[0] == 0) {
         return 0; 
     }
-    
 
     // Initialize quotient and remainder to 0
     quotient->size = numer->size;
@@ -576,117 +575,6 @@ int LN_div_mod(const LN *numer, const LN *denom, LN *quotient, LN *remainder) {
         quotient->size--;
     } 
     
-    return 1;
-}
-
-
-typedef struct {
-    LN M;       // The modulus
-    LN mu;      // The precomputed inverse: floor(2^(2k) / M)
-    uint64_t k; // Bit length of M
-} LN_BarrettSet;
-
-// Barrett Reduction Mod, out = X mod M
-int LN_barrett_redu(LN *X, const LN_BarrettSet *ctx, LN *out) {
-    if(!X || !ctx || !out){
-        return 0;
-    }
-
-    LN q1 = {0}, q2 = {0}, q3 = {0};
-    LN q3_M = {0}, R = {0};
-
-    // q1 = X >> (k - 1)
-    if(ctx->k > 1) {
-        LN_R_shift(X, ctx->k - 1, &q1);
-    } else {
-        q1.size = X->size;
-        q1.nums = (uint64_t*)calloc(q1.size, sizeof(uint64_t));
-        memcpy(q1.nums, X->nums, q1.size * sizeof(uint64_t));
-    }
-
-    // q2 = q1 * mu
-    LN_LN_mult(&q1, (LN*)&(ctx->mu), &q2);
-
-    // q3 = q2 >> (k + 1)
-    LN_R_shift(&q2, ctx->k + 1, &q3);
-
-    // q3_M = q3 * M
-    LN_LN_mult(&q3, (LN*)&(ctx->M), &q3_M);
-
-    // R = X - q3_M
-    if(LN_cmp(X, &q3_M) >= 0) {
-        LN_sub(X, &q3_M, &R);
-    } else {
-        // Estimation Overshooting Fallback
-        R.size = X->size;
-        R.nums = (uint64_t*)calloc(R.size, sizeof(uint64_t));
-        memcpy(R.nums, X->nums, R.size * sizeof(uint64_t));
-    }
-
-    // Corrections: while R >= M, R = R - M
-    while(LN_cmp(&R, &(ctx->M)) >= 0) {
-        LN temp_R;
-        LN_sub(&R, &(ctx->M), &temp_R);
-        free_LN(&R);
-        R = temp_R;
-    }
-
-    // Transfer memory and values to output
-    out->size = R.size;
-    out->nums = R.nums;
-
-    // Freeing Temp Vars
-    free_LN(&q1);
-    free_LN(&q2);
-    free_LN(&q3);
-    free_LN(&q3_M);
-
-    return 1;
-}
-
-// Mod Expoenetation, Square Multiply, out = (base ^ exp) mod M
-int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
-
-    if(!base || !exp || !ctx || !out){
-        return 0;
-    }
-
-    // Set base result to 1
-    LN result = {0};
-    result.size = 1;
-    result.nums = (uint64_t*)calloc(1, sizeof(uint64_t));
-    result.nums[0] = 1;
-
-    // base_temp = base mod M
-    LN base_temp = {0};
-    LN_barrett_redu(base, ctx, &base_temp); 
-
-    uint64_t total_bits = LN_bit_length(exp);
-
-    // Process from LSB to MSB
-    for (uint64_t i = 0; i < total_bits; i++) {
-        // If current bit is 1, result = (result * base_temp) % M
-        if(LN_get_bit(exp, i) == 1) {
-            LN mult_res = {0};
-            LN_LN_mult(&result, &base_temp, &mult_res);
-            free_LN(&result);
-            LN_barrett_redu(&mult_res, ctx, &result);
-            free_LN(&mult_res);
-        }
-        
-        // base_temp = (base_temp * base_temp) % M
-        LN sqr_res = {0};
-        LN_LN_mult(&base_temp, &base_temp, &sqr_res);
-        free_LN(&base_temp);
-        LN_barrett_redu(&sqr_res, ctx, &base_temp);
-        free_LN(&sqr_res);
-    }
-
-    free_LN(&base_temp);
-    
-    // Transfer memory ownership to output
-    out->size = result.size;
-    out->nums = result.nums;
     return 1;
 }
 
