@@ -1,5 +1,5 @@
 cpu:
-	gcc malu_cpu.c -o malu_cpu -lm -lcrypto
+	gcc malu_cpu.c -o malu_cpu -lm -lcrypto -O3 -march=native -flto
 	./malu_cpu
 
 gpu: malu_gpu.cu
