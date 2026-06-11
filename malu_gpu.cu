@@ -510,6 +510,21 @@ __device__ int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
     return 1;
 }
 
+__global__ void batch_rsa_kernel(LN *messages, LN *exponents, LN_BarrettSet *ctx, LN *ciphertexts, int total_threads) {
 
+    // thread index
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= total_threads) return;
+
+    LN out_container;
+    out_container.size = 1;
+    for(int i=0; i<8192; i++) out_container.nums[i] = 0;
+
+    // Threads compute independent modular exponents concurrently 
+    LN_mod_exp(&messages[tid], &exponents[tid], &ctx[tid], &out_container);
+
+    // Save final value back to global memory space
+    ciphertexts[tid] = out_container;
+}
 
 
