@@ -649,3 +649,45 @@ void LN_to_BN(LN *ln, BIGNUM **bn) {
 }
 
 
+// Modified veresion of rsa check
+int main(void) {
+    // same as cpu testing
+    int iters = 10000; 
+    bool seeded = true;
+    int seed = 1020;
+
+    printf("GPU testing started...\n\n");
+    if (seeded) {
+        srand(seed);
+        printf("Running %d parallel tasks with Seed %d\n\n", iters, seed);
+    } else {
+        srand(time(NULL));
+        printf("Running %d parallel tasks with Random Seed\n\n", iters);
+    }
+
+    // Allocate memory on CPU
+    LN *h_messages = (LN*)malloc(iters * sizeof(LN));
+    LN *h_exponents = (LN*)malloc(iters * sizeof(LN));
+    LN *h_ciphertexts = (LN*)malloc(iters * sizeof(LN));
+    LN_BarrettSet *h_ctx = (LN_BarrettSet*)malloc(iters * sizeof(LN_BarrettSet));
+
+
+    // Generate the random testing data
+    // creates the first random 2048-but message at index 0 
+    LN N, e;
+    printf("Generating Random RSA Parameters on Host CPU...\n");
+    LN_rand_num(&N, 2048); // Generate 2048-bit modulus
+    LN_rand_num(&h_messages[0], 2048); // Generate initial base message
+    
+    // Fill the rest of the 10000 array
+    for (int i = 1; i < iters; i++) {
+        LN_rand_num(&h_messages[i], 2048);
+    }
+    
+    // Standard RSA public exponent 65537, 0x10001
+    e.size = 1;
+    e.nums[0] = 65537;
+    for(int i = 1; i < 128; i++) e.nums[i] = 0;
+
+    //////////////////////////////////////////////////////////////////////////
+}
