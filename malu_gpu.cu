@@ -102,7 +102,7 @@ typedef struct {
 //     return 1;
 // }
 
-__device__ int LN_R_shift(LN *in, uint32_t shift_amount, LN *out){
+__host__ __device__ int LN_R_shift(LN *in, uint32_t shift_amount, LN *out){
 
     if(!in || !out) {
         return 0;
@@ -145,7 +145,7 @@ __device__ int LN_R_shift(LN *in, uint32_t shift_amount, LN *out){
     return 1;
 }
 
-__device__ int LN_L_shift(LN *in, uint32_t shift_amount, LN *out){
+__host__ __device__ int LN_L_shift(LN *in, uint32_t shift_amount, LN *out){
 
     if(!in || !out){
       return 0;
@@ -191,7 +191,7 @@ __device__ int LN_L_shift(LN *in, uint32_t shift_amount, LN *out){
 }
 
 // LN * Integer
-__device__ int LN_int_mult(LN *op1, uint64_t op2, LN *out) {
+__host__ __device__ int LN_int_mult(LN *op1, uint64_t op2, LN *out) {
 
     if(!op1 || !out) {
         return 0;
@@ -223,7 +223,7 @@ __device__ int LN_int_mult(LN *op1, uint64_t op2, LN *out) {
 }
 
 // LN * LN
-__device__ int LN_LN_mult(LN *op1, LN *op2, LN *out) {
+__host__ __device__ int LN_LN_mult(LN *op1, LN *op2, LN *out) {
 
     if(!op1 || !op2 || !out){
         return 0;
@@ -259,7 +259,7 @@ __device__ int LN_LN_mult(LN *op1, LN *op2, LN *out) {
 
 // Compares two LNs
 // Returns 1 if op1 > op2, -1 if op1 < op2, 0 if equal
-__device__ int LN_cmp(const LN *op1, const LN *op2) {
+__host__ __device__ int LN_cmp(const LN *op1, const LN *op2) {
     if(op1->size > op2->size) return 1;
     if(op1->size < op2->size) return -1;
     
@@ -272,7 +272,7 @@ __device__ int LN_cmp(const LN *op1, const LN *op2) {
 }
 
 // Subtract, out = op1 - op2, assuming op1 > op2
-__device__ int LN_sub(const LN *op1, const LN *op2, LN *out) {
+__host__ __device__ int LN_sub(const LN *op1, const LN *op2, LN *out) {
     if(LN_cmp(op1, op2) < 0){
         return 0;
     }
@@ -312,7 +312,7 @@ __device__ int LN_sub(const LN *op1, const LN *op2, LN *out) {
 
 
 // Total number of significant bits in the LN
-__device__ uint64_t LN_bit_length(const LN *num) {
+__host__ __device__ uint64_t LN_bit_length(const LN *num) {
 
     if(num->size == 0 || (num->size == 1 && num->nums[0] == 0)){
         return 0;
@@ -330,7 +330,7 @@ __device__ uint64_t LN_bit_length(const LN *num) {
 }
 
 // Get a specific bit (0-indexed)
-__device__ int LN_get_bit(const LN *num, uint64_t bit_index) {
+__host__ __device__ int LN_get_bit(const LN *num, uint64_t bit_index) {
     uint64_t limb = bit_index / 64;
 
     if(limb >= num->size){
@@ -341,7 +341,7 @@ __device__ int LN_get_bit(const LN *num, uint64_t bit_index) {
 }
 
 // Helper to set a specific bit in a limb to 1
-__device__ void LN_set_bit(LN *num, uint64_t bit_index) {
+__host__ __device__ void LN_set_bit(LN *num, uint64_t bit_index) {
     uint64_t limb = bit_index / 64;
 
     if(limb < num->size) {
