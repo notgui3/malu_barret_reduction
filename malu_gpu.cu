@@ -386,7 +386,6 @@ __device__ int LN_div_mod(const LN *numer, const LN *denom, LN *quotient, LN *re
             // remainder = remainder - denom
             LN new_rem;
             LN_sub(remainder, denom, &new_rem);
-            free_LN(remainder);
             *remainder = new_rem;
             
             // quotient[i] = 1
@@ -459,8 +458,7 @@ __device__ int LN_barrett_redu(LN *X, const LN_BarrettSet *ctx, LN *out) {
     }
 
     // Transfer memory and values to output
-    out->size = R.size;
-    out->nums = R.nums;
+    *out = R;
 
 
     return 1;
@@ -485,7 +483,7 @@ __device__ int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
     LN base_temp;
     base_temp.size = 1;
     base_temp.nums[0] = 0;
-    for (uint64_t k = 1; k < MAX_LIMBS; k++) {
+    for (uint64_t k = 1; k < 8192; k++) {
         base_temp.nums[k] = 0;
     }
     LN_barrett_redu(base, ctx, &base_temp); 
@@ -508,9 +506,10 @@ __device__ int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
     }
     
     // Transfer memory ownership to output
-    out->size = result.size;
-    out->nums = result.nums;
+    *out = result;
     return 1;
 }
+
+
 
 
