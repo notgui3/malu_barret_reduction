@@ -689,5 +689,46 @@ int main(void) {
     e.nums[0] = 65537;
     for(int i = 1; i < 128; i++) e.nums[i] = 0;
 
-    //////////////////////////////////////////////////////////////////////////
+    
+    // Precompute Barrett Context for N one time on CPU
+    LN_setup_barrett(&N, &h_ctx[0]);
+    
+    // Broadcast the common key parameters across all threads
+    for (int i = 0; i < iters; i++) {
+        h_exponents[i] = e;
+        h_ctx[i] = h_ctx[0];
+    }
+
+    printf("\nReserving memory on the GPU...\n");
+    LN *device_messages, *device_exponents, *device_ciphertexts;
+    LN_BarrettSet *device_ctx;
+    
+    cudaMalloc((void**)&device_messages, iters * sizeof(LN));
+    cudaMalloc((void**)&device_exponents, iters * sizeof(LN));
+    cudaMalloc((void**)&device_ciphertexts, iters * sizeof(LN));
+    cudaMalloc((void**)&device_ctx, iters * sizeof(LN_BarrettSet));
+
+    printf("COpying data from CPU to GPU...\n");
+    cudaMemcpy(device_messages, h_messages, iters * sizeof(LN), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_exponents, h_exponents, iters * sizeof(LN), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_ctx, h_ctx, iters * sizeof(LN_BarrettSet), cudaMemcpyHostToDevice);
+
+    // GPU Config
+    int threadsPerBlock = 128;
+    int blocksPerGrid = (iters+threadsPerBlock - 1) / threadsPerBlock;
+
+    printf("Running RSA Encryption %d times in parallel...\n", iters);
+    clock_t start_time = clock();
+    
+    batch_rsa_kernel<<<blocksPerGrid, threadsPerBlock>>>(device_messages, device_exponents, device_ctx, device_ciphertexts, iters);
+    
+    // This is important to prevent error
+    cudaDeviceSynchronize();
+    
+    clock_t end_time = clock();
+    double gpu_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    printf("GPU Processing Time: %f seconds\n", gpu_time);
+
+
+    
 }
