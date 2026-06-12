@@ -226,6 +226,51 @@ int LN_L_shift(LN *in, uint32_t shift_amount, LN *out){
 
 }
 
+// Add two LNs, out = op1 + op2
+int LN_add(const LN *op1, const LN *op2, LN *out){
+    
+    if(!op1 || !op2 || !out){
+        return 0;
+    }
+
+    // Maximum bit size is the larger size + 1 
+    uint64_t max_size = (op1->size > op2->size) ? op1->size : op2->size;
+    out->size = max_size + 1;
+
+    out->nums = (uint64_t *)calloc(out->size, sizeof(uint64_t));
+    if(!out->nums){
+        return 0;
+    }
+
+    uint64_t carry = 0;
+    
+    for(uint64_t i = 0; i < max_size; i++){
+        uint64_t a = (i < op1->size) ? op1->nums[i] : 0;
+        uint64_t b = (i < op2->size) ? op2->nums[i] : 0;
+
+        uint64_t sum = a + b + carry;
+
+        // Determine if an overflow occurred in this limb step to set the next carry
+        if(sum < a || (sum == a && carry > 0)){
+            carry = 1;
+        } 
+        else{
+            carry = 0;
+        }
+
+        out->nums[i] = sum;
+    }
+
+    out->nums[max_size] = carry;
+
+    // Remove leading zero limbs
+    while(out->size > 1 && out->nums[out->size - 1] == 0){
+        out->size--;
+    }
+
+    return 1;
+}
+
 // LN * Integer
 int LN_int_mult(LN *op1, uint64_t op2, LN *out) {
 
