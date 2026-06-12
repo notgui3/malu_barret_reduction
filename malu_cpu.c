@@ -540,6 +540,33 @@ int LN_barrett_redu(LN *X, const LN_BarrettSet *ctx, LN *out) {
     return 1;
 }
 
+// Modular Multiplication, out = (op1 * op2) mod M
+int LN_mod_mult(LN *op1, LN *op2, const LN_BarrettSet *ctx, LN *out){
+    
+    if(!op1 || !op2 || !ctx || !out){
+        return 0;
+    }
+
+    LN intermediate_product = {0};
+
+    // Multiply
+    if(!LN_LN_mult(op1, op2, &intermediate_product)){
+        return 0;
+    }
+    
+    free_LN(out);
+
+    // Barrett Reduction Mod
+    if(!LN_barrett_redu(&intermediate_product, ctx, out)){
+        free_LN(&intermediate_product);
+        return 0;
+    }
+
+    free_LN(&intermediate_product);
+
+    return 1;
+}
+
 // Mod Expoenetation, Square Multiply, out = (base ^ exp) mod M
 int LN_mod_exp(LN *base, LN *exp, LN_BarrettSet *ctx, LN *out) {
 
