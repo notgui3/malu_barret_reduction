@@ -271,36 +271,6 @@ int LN_add(const LN *op1, const LN *op2, LN *out){
     return 1;
 }
 
-// LN * Integer
-int LN_int_mult(LN *op1, uint64_t op2, LN *out) {
-
-    if(!op1 || !out) {
-        return 0;
-    }
-    
-    out->size = op1->size + 1; // Max possible size
-    out->nums = (uint64_t *)calloc(out->size, sizeof(uint64_t));
-
-    if(!out->nums){
-        return 0;
-    }
-
-    unsigned __int128 carry = 0;
-
-    for (uint64_t i = 0; i < op1->size; i++){
-        unsigned __int128 res = (unsigned __int128)op1->nums[i] * op2 + carry;
-        out->nums[i] = (uint64_t)res; // Keep lower 64 bits
-        carry = res >> 64;            // Carry upper 64 bits
-    }
-
-    out->nums[op1->size] = (uint64_t)carry;
-
-    while(out->size > 1 && out->nums[out->size - 1] == 0){
-        out->size--;
-    } 
-    return 1;
-}
-
 // LN * LN
 int LN_LN_mult(LN *op1, LN *op2, LN *out) {
 
